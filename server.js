@@ -43,8 +43,9 @@ app.use(limiter);
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5173",
-  "https://your-vercel-app.vercel.app", // Replace with your Vercel domain
-  "https://fixit-app.vercel.app" // Example domain
+  "https://fix-it-frontend.vercel.app", // Your actual frontend domain
+  "https://fix-it-frontend-git-main.vercel.app", // Vercel preview URLs
+  "https://fix-it-frontend-git-develop.vercel.app"
 ];
 
 app.use(cors({
