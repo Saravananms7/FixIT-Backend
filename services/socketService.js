@@ -1,6 +1,7 @@
 const socketIo = require('socket.io');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Issue = require('../models/Issue');
 
 // Hardcoded JWT secret
 const JWT_SECRET = "your-super-secret-jwt-key-change-this-in-production";
@@ -97,6 +98,16 @@ class SocketService {
       // Handle private messages
       socket.on('message:send', (data) => {
         this.handlePrivateMessage(socket, data);
+      });
+
+      // Handle ask for help request (owner -> helper)
+      socket.on('help:ask', (data) => {
+        this.handleHelpAsk(socket, data);
+      });
+
+      // Handle help response (helper -> owner)
+      socket.on('help:respond', (data) => {
+        this.handleHelpRespond(socket, data);
       });
 
       // Handle typing indicators
@@ -224,6 +235,86 @@ class SocketService {
       recipientId,
       message,
       issueId,
+      timestamp: new Date()
+    });
+  }
+
+  handleHelpAsk(socket, data) {
+    const { recipientId, issueId, note } = data;
+
+    // Notify the potential helper
+    this.io.to(`user:${recipientId}`).emit('help:request', {
+      from: {
+        id: socket.userId,
+        name: socket.user.getFullName(),
+        employeeId: socket.user.employeeId
+      },
+      issueId,
+      note: note || null,
+      timestamp: new Date()
+    });
+
+    // Acknowledge to requester
+    socket.emit('help:asked', {
+      recipientId,
+      issueId,
+      timestamp: new Date()
+    });
+  }
+
+  handleHelpRespond(socket, data) {
+    const { toUserId, issueId, accepted, note } = data;
+
+    // Notify the original requester (issue owner)
+    this.io.to(`user:${toUserId}`).emit('help:response', {
+      from: {
+        id: socket.userId,
+        name: socket.user.getFullName(),
+        employeeId: socket.user.employeeId
+      },
+      issueId,
+      accepted: Boolean(accepted),
+      note: note || null,
+      timestamp: new Date()
+    });
+
+    // If accepted, attempt to assign the issue to the responder (helper)
+    if (accepted) {
+      (async () => {
+        try {
+          const issue = await Issue.findById(issueId);
+          if (!issue) return;
+          // Only assign if the toUserId is the owner of the issue and issue is not already resolved/closed
+          if (issue.postedBy.toString() !== toUserId.toString()) return;
+          if (['resolved', 'closed'].includes(issue.status)) return;
+
+          issue.assignedTo = socket.userId;
+          issue.status = 'assigned';
+          await issue.save();
+
+          // Notify both users about assignment
+          this.io.to(`user:${socket.userId}`).emit('issue:assigned', {
+            issueId,
+            assignedBy: { id: toUserId },
+            timestamp: new Date()
+          });
+          this.io.to(`user:${toUserId}`).emit('issue:assigned', {
+            issueId,
+            assignedBy: { id: toUserId },
+            timestamp: new Date()
+          });
+        } catch (err) {
+          // Swallow errors to avoid crashing socket pipeline
+          console.error('Error auto-assigning on help accept:', err?.message);
+        }
+      })();
+    }
+
+    // Acknowledge to responder
+    socket.emit('help:responded', {
+      toUserId,
+      issueId,
+      accepted: Boolean(accepted),
       timestamp: new Date()
     });
   }

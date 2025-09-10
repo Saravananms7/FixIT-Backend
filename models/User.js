@@ -80,6 +80,10 @@ const userSchema = new mongoose.Schema({
     totalTimeHelped: {
       type: Number,
       default: 0 // in minutes
+    },
+    points: {
+      type: Number,
+      default: 0
     }
   },
   availability: {
@@ -132,10 +136,13 @@ userSchema.methods.getFullName = function() {
 };
 
 // Method to calculate helper score for AI ranking
-userSchema.methods.calculateHelperScore = function(requiredSkills) {
+// Considers skills match, user experience (points, issues resolved, rating),
+// domain relevance (user department vs issue category), and issue priority.
+userSchema.methods.calculateHelperScore = function(requiredSkills, category = 'other', priority = 'medium') {
   let skillScore = 0;
   let historyScore = 0;
   let engagementScore = 0;
+  let domainScore = 0;
 
   // Skill relevance score
   const userSkillNames = this.skills.map(skill => skill.name.toLowerCase());
@@ -144,9 +151,11 @@ userSchema.methods.calculateHelperScore = function(requiredSkills) {
   );
   skillScore = matchingSkills.length / requiredSkills.length;
 
-  // History score based on resolved issues and rating
-  historyScore = Math.min(this.contributions.issuesResolved / 10, 1) * 
-                 (this.rating.average / 5);
+  // History score based on resolved issues, points, and rating
+  const pointsScore = Math.min(this.contributions.points / 100, 1); // Normalize points to 0-1
+  const resolvedScore = Math.min(this.contributions.issuesResolved / 10, 1);
+  const ratingScore = this.rating.average / 5;
+  historyScore = (pointsScore * 0.4 + resolvedScore * 0.3 + ratingScore * 0.3);
 
   // Engagement score based on recent activity and availability
   const daysSinceLastActive = (Date.now() - this.lastActive.getTime()) / (1000 * 60 * 60 * 24);
@@ -155,14 +164,41 @@ userSchema.methods.calculateHelperScore = function(requiredSkills) {
                            this.availability === 'busy' ? 0.5 : 0;
   engagementScore = (recencyScore + availabilityScore) / 2;
 
-  // Hardcoded weights instead of environment variables
-  const skillWeight = 0.4;
-  const historyWeight = 0.3;
-  const engagementWeight = 0.3;
+  // Domain relevance based on department vs issue category
+  const categoryToDepartments = {
+    hardware: ['it', 'infrastructure', 'helpdesk', 'support'],
+    software: ['it', 'engineering', 'development', 'helpdesk'],
+    network: ['it', 'network', 'infrastructure', 'security'],
+    printer: ['it', 'helpdesk', 'support'],
+    email: ['it', 'helpdesk', 'support'],
+    access: ['it', 'security', 'helpdesk'],
+    other: []
+  };
+  const dept = (this.department || '').toLowerCase();
+  const domainList = categoryToDepartments[category] || [];
+  domainScore = domainList.length === 0 ? 0.2 : (domainList.some(d => dept.includes(d)) ? 1 : 0);
 
-  return (skillScore * skillWeight) + 
-         (historyScore * historyWeight) + 
-         (engagementScore * engagementWeight);
+  // Weights
+  const skillWeight = 0.35;
+  const historyWeight = 0.30;
+  const domainWeight = 0.20;
+  const engagementWeight = 0.15;
+
+  let baseScore = (skillScore * skillWeight) +
+                  (historyScore * historyWeight) +
+                  (domainScore * domainWeight) +
+                  (engagementScore * engagementWeight);
+
+  // Priority multiplier to favor faster/experienced helpers on urgent issues
+  const priorityMultiplierMap = {
+    urgent: 1.2,
+    high: 1.1,
+    medium: 1.0,
+    low: 0.95
+  };
+  const priorityMultiplier = priorityMultiplierMap[priority] || 1.0;
+
+  return baseScore * priorityMultiplier;
 };
 
 module.exports = mongoose.model('User', userSchema); 

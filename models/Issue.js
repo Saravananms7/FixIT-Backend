@@ -109,7 +109,14 @@ const issueSchema = new mongoose.Schema({
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
     },
+    solvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
     resolvedAt: {
+      type: Date
+    },
+    solvedAt: {
       type: Date
     },
     timeSpent: {
@@ -124,6 +131,10 @@ const issueSchema = new mongoose.Schema({
     feedback: {
       type: String,
       trim: true
+    },
+    pointsAwarded: {
+      type: Number,
+      default: 0
     }
   },
   tags: [{
@@ -192,6 +203,15 @@ issueSchema.methods.resolve = function(resolvedBy, solution, timeSpent) {
   this.resolution.solution = solution;
   this.resolution.resolvedAt = new Date();
   this.resolution.timeSpent = timeSpent || 0;
+};
+
+// Method to mark issue as solved by owner
+issueSchema.methods.markAsSolved = function(solvedBy, solution, pointsAwarded = 0) {
+  this.status = 'resolved';
+  this.resolution.solvedBy = solvedBy;
+  this.resolution.solution = solution;
+  this.resolution.solvedAt = new Date();
+  this.resolution.pointsAwarded = pointsAwarded;
 };
 
 // Method to add comment

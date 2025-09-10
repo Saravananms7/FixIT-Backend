@@ -9,6 +9,7 @@ const {
   assignIssue,
   addComment,
   resolveIssue,
+  markAsSolved,
   voteIssue
 } = require('../controllers/issueController');
 const { protect } = require('../middleware/auth');
@@ -35,6 +36,7 @@ router.put('/:id/assign', assignIssue);
 // Comments and resolution
 router.post('/:id/comments', addComment);
 router.put('/:id/resolve', resolveIssue);
+router.put('/:id/solve', markAsSolved);
 
 // Voting
 router.post('/:id/vote', voteIssue);

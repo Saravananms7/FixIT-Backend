@@ -9,7 +9,15 @@ const createIssueSchema = z.object({
   description: z.string().min(10),
   category: z.enum(['hardware', 'software', 'network', 'printer', 'email', 'access', 'other']),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
-  requiredSkills: z.array(z.string().min(2)).min(1),
+  requiredSkills: z
+    .preprocess((val) => {
+      // Accept string of comma-separated skills or array
+      if (Array.isArray(val)) return val;
+      if (typeof val === 'string') {
+        return val.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+      }
+      return [];
+    }, z.array(z.string().min(2)).min(1)),
   location: z.object({
     building: z.string().optional(),
     floor: z.string().optional(),
@@ -106,7 +114,8 @@ const getIssue = asyncHandler(async (req, res) => {
     .populate('postedBy', 'firstName lastName employeeId department')
     .populate('assignedTo', 'firstName lastName employeeId department')
     .populate('comments.user', 'firstName lastName employeeId')
-    .populate('resolution.resolvedBy', 'firstName lastName employeeId');
+    .populate('resolution.resolvedBy', 'firstName lastName employeeId')
+    .populate('resolution.solvedBy', 'firstName lastName employeeId department');
 
   if (!issue) {
     return res.status(404).json({
@@ -211,7 +220,7 @@ const getHelperSuggestions = asyncHandler(async (req, res) => {
     });
   }
 
-  // Find users with matching skills
+  // Find users with matching skills (broad first-pass)
   const potentialHelpers = await User.find({
     isActive: true,
     'skills.name': { $in: issue.requiredSkills.map(skill => new RegExp(skill, 'i')) }
@@ -219,7 +228,7 @@ const getHelperSuggestions = asyncHandler(async (req, res) => {
 
   // Calculate helper scores using AI algorithm
   const helpersWithScores = potentialHelpers.map(helper => {
-    const score = helper.calculateHelperScore(issue.requiredSkills);
+    const score = helper.calculateHelperScore(issue.requiredSkills, issue.category, issue.priority);
     return {
       ...helper.toObject(),
       helperScore: score
@@ -376,6 +385,77 @@ const resolveIssue = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Mark issue as solved by owner
+// @route   PUT /api/issues/:id/solve
+// @access  Private
+const markAsSolved = asyncHandler(async (req, res) => {
+  const { solvedBy, solution = '', pointsAwarded = 0 } = req.body;
+
+  if (!solvedBy) {
+    return res.status(400).json({
+      success: false,
+      message: 'Solver ID is required'
+    });
+  }
+
+  const issue = await Issue.findById(req.params.id);
+
+  if (!issue) {
+    return res.status(404).json({
+      success: false,
+      message: 'Issue not found'
+    });
+  }
+
+  // Check if user can mark this issue as solved (only the owner)
+  if (issue.postedBy.toString() !== req.user._id.toString()) {
+    return res.status(403).json({
+      success: false,
+      message: 'Only the issue owner can mark it as solved'
+    });
+  }
+
+  // Check if issue is already resolved
+  if (issue.status === 'resolved' || issue.status === 'closed') {
+    return res.status(400).json({
+      success: false,
+      message: 'Issue is already resolved'
+    });
+  }
+
+  // Handle "self" case (solved by issue owner)
+  if (solvedBy === 'self') {
+    // Mark issue as solved by the owner
+    issue.markAsSolved(req.user._id, solution, 0);
+    await issue.save();
+  } else {
+    // Check if solver exists
+    const solver = await User.findById(solvedBy);
+    if (!solver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Solver not found'
+      });
+    }
+
+    // Mark issue as solved
+    issue.markAsSolved(solvedBy, solution, pointsAwarded);
+    await issue.save();
+
+    // Update solver's points and contributions
+    solver.contributions.points += pointsAwarded;
+    solver.contributions.issuesResolved += 1;
+    await solver.save();
+  }
+
+  await issue.populate('resolution.solvedBy', 'firstName lastName employeeId department');
+
+  res.json({
+    success: true,
+    data: issue
+  });
+});
+
 // @desc    Vote on issue
 // @route   POST /api/issues/:id/vote
 // @access  Private
@@ -434,5 +514,6 @@ module.exports = {
   assignIssue,
   addComment,
   resolveIssue,
+  markAsSolved,
   voteIssue
 }; 

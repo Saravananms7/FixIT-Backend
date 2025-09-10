@@ -206,17 +206,28 @@ const seedDatabase = async () => {
 
     console.log('💬 Added sample comments');
 
-    // Update user contribution counts
+    // Randomize points and experience for testing recommendations
     for (const user of createdUsers) {
       const postedCount = await Issue.countDocuments({ postedBy: user._id });
-      const resolvedCount = await Issue.countDocuments({ 'resolution.resolvedBy': user._id });
-      
+
+      // Randomize experience-like metrics
+      const randomResolved = Math.floor(Math.random() * 40); // 0-39
+      const randomPoints = Math.floor(Math.random() * 250); // 0-249
+      const randomRating = (Math.random() * 2 + 3).toFixed(1); // 3.0 - 5.0
+      const randomRatingCount = Math.floor(Math.random() * 50) + 5; // 5 - 54
+      const lastActiveDaysAgo = Math.floor(Math.random() * 30); // 0-29 days ago
+
       user.contributions.issuesPosted = postedCount;
-      user.contributions.issuesResolved = resolvedCount;
+      user.contributions.issuesResolved = randomResolved;
+      user.contributions.points = randomPoints;
+      user.rating.average = Math.min(5, Math.max(0, Number(randomRating)));
+      user.rating.count = randomRatingCount;
+      user.lastActive = new Date(Date.now() - lastActiveDaysAgo * 24 * 60 * 60 * 1000);
+
       await user.save();
     }
 
-    console.log('📊 Updated user contribution counts');
+    console.log('📊 Randomized user points, experience, and activity');
 
     console.log('✅ Database seeding completed successfully!');
     console.log('\n📝 Sample login credentials:');
